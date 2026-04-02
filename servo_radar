@@ -1,0 +1,101 @@
+#include <ESP32Servo.h>
+
+const int trigPin = 32;
+const int echoPin = 33;
+const int buzzer  = 27;
+const int ledPin  = 26; // <-- NEW: Added LED Pin
+const int servoPin = 14;
+
+Servo myServo;
+int pos = 0;    
+int step = 5;   
+
+// This stops the ESP32 from spamming the tone() and digitalWrite() commands
+bool isBuzzing = false; 
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(buzzer, OUTPUT);
+  pinMode(ledPin, OUTPUT); // <-- NEW: Set LED as an output
+
+  // Make sure LED is off on startup
+  digitalWrite(ledPin, LOW);
+
+  // Allocate timers for ESP32
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1); 
+  
+  myServo.setPeriodHertz(50);
+  myServo.attach(servoPin, 500, 2400);
+  
+  Serial.println("Sentry Radar (Buzzer & LED) Online...");
+}
+
+void loop() {
+  long distance = getDistance();
+  
+  // ==========================================
+  // OBJECT DETECTED (< 15cm) - LOCK ON
+  // ==========================================
+  if (distance > 0 && distance < 15) {
+    
+    // 1. TRIGGER ALARMS (Only execute once per detection to prevent crashing)
+    if (!isBuzzing) {
+      tone(buzzer, 1000);        // Start the audio wave
+      digitalWrite(ledPin, HIGH); // <-- NEW: Turn ON the Lock-On LED
+      isBuzzing = true;          // Mark that alarms are active
+    }
+    
+    // 2. LOCK ON TARGET (Keep writing the current position, do not change 'pos')
+    myServo.write(pos);
+    
+    Serial.print("!!! TARGET LOCKED AT ");
+    Serial.print(distance);
+    Serial.println(" cm !!!");
+    
+    delay(100); 
+  } 
+  
+  // ==========================================
+  // NO OBJECT - CLEAR PATH
+  // ==========================================
+  else {
+    
+    // 1. TURN OFF ALARMS (Only execute if they were previously on)
+    if (isBuzzing) {
+      noTone(buzzer);           // Stop the audio wave
+      digitalWrite(ledPin, LOW); // <-- NEW: Turn OFF the Lock-On LED
+      isBuzzing = false;        // Mark that alarms are off
+    }
+    
+    // 2. RESUME SWEEPING
+    myServo.write(pos);
+    pos += step; 
+    
+    // Clamp the values to prevent out-of-bounds servo grinding
+    if (pos >= 180) {
+      pos = 180;
+      step = -step;
+    } else if (pos <= 0) {
+      pos = 0;
+      step = -step;
+    }
+    
+    delay(50); // Control the speed of the scan
+  }
+}
+
+long getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  long duration = pulseIn(echoPin, HIGH, 25000);
+  if (duration == 0) return 999; 
+  
+  return (long)(duration * 0.034 / 2);
+}
